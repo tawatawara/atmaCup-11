@@ -1,0 +1,88 @@
+globals:
+  seed: 1086
+  output_path: ../output/000_resnet18d_simsiam
+  device: cuda
+  cuda_visible_devices: 0
+  enable_amp: True
+  deterministic: True
+  cudnn_benchmark: True
+  max_epoch: 300
+  grad_accum: 1
+
+model:
+  type: LightlySimSiam
+  backbone:
+    type: timm_create_model
+    model_name: resnet18d
+    num_classes: 0
+    pretrained: False
+  num_ftrs: "@backbone.num_features"
+  proj_hidden_dim: 2048
+  pred_hidden_dim: {type: __floordiv__, x0: "@../num_ftrs", x1: 4}
+  out_dim: "@num_ftrs"
+  num_mlp_layers: 2
+
+dataset:
+  img_size: 224
+  ch_mean_norm: [0.7757, 0.7424, 0.6690]
+  ch_std_norm: [0.1146, 0.1135, 0.1139]
+  
+  train:
+    type: ContrastiveImagePathLabelLazyDataset
+    paths: null  # set in training code
+    labels: null  # set in training code
+    transform:
+      type: Compose
+      transforms:
+        - {type: RandomResizedCrop, p: 1.0, scale: [0.2, 1.0],
+            height: "@/dataset/img_size", width: "@/dataset/img_size"}
+        - {type: ColorJitter, p: 0.8,
+            brightness: 0.4, contrast: 0.4, saturation: 0.4, hue: 0.1}
+        - {type: ToGray, p: 0.2}
+        - {type: GaussianBlur, p: 0.5, sigma_limit: [0.1, 2.0]}
+        - {type: HorizontalFlip, p: 0.5}
+        - {type: Normalize, always_apply: True, max_pixel_value: 255.0,
+            mean: "@/dataset/ch_mean_norm", std: "@/dataset/ch_std_norm"}
+        - {type: ToTensorV2, always_apply: True}
+
+loader:
+  train: {type: DataLoader, dataset: "@/dataset/train",
+    batch_size: 512, num_workers: 4, shuffle: True, drop_last: True}
+
+optimizer:
+  type: SGD
+  params: {type: method_call, obj: "@/model", method: parameters}
+  lr:
+    type: __mul__
+    x0: 5.0e-02
+    x1:
+        type: __div__
+        x0: {type: __mul__, x0: "@/loader/train/batch_size", x1: "@/globals/grad_accum"}
+        x1: 256
+  weight_decay: 1.0e-04
+  nesterov: True
+  momentum: 0.9
+
+loss: {type: SymNegCosineSimilarityLoss}
+
+manager:
+  type: ExtensionsManager
+  models: "@/model"
+  optimizers: "@/optimizer"
+  max_epochs: "@/globals/max_epoch"
+  iters_per_epoch: {type: __len__, obj: "@/loader/train"}
+  out_dir: "@/globals/output_path"
+
+extensions:
+  # # log
+  - {type: observe_lr, optimizer: "@/optimizer"}
+  - {type: LogReport}
+  - {type: PlotReport, y_keys: lr, x_key: epoch, filename: lr.png}
+  - {type: PlotReport, y_keys: train/loss, x_key: epoch, filename: loss.png}
+  - {type: PlotReport, y_keys: train/std, x_key: epoch, filename: std.png}
+  - {type: PrintReport, entries: [
+      epoch, iteration, lr, train/loss, train/std, elapsed_time]}
+  - {type: ProgressBar, update_interval: 4}
+  # snapshot
+  - extension: {type: snapshot, target: "@/backbone", filename: "snapshot_epoch_{.epoch}.pth"}
+    trigger: [50, epoch]

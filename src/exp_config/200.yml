@@ -1,0 +1,138 @@
+globals:
+  seed: 1086
+  output_root: ../output/200_resnet18d_reg
+  output_path: 
+    type: path_join
+    args:
+      - "@/globals/output_root"
+      - {type: str_format, target: "fold{}", args: "@/globals/val_fold"}
+  val_fold: null
+  meta_file: train_sgkf-5fold.csv
+  task: regression
+  freeze_backbone: False
+  max_epoch: 200
+  grad_accum: 1
+  device: cuda
+  cuda_visible_devices: 0
+  enable_amp: True
+  deterministic: True
+  cudnn_benchmark: True
+
+model:
+  type: BasicImageModel
+  base_name: resnet18d
+  dims_head: [null, 1]
+  pretrained: ../output/000_resnet18d_simsiam/snapshot_epoch_150.pth
+
+dataset:
+  img_size: 224  # height, width
+  ch_mean_norm: [0.7757, 0.7424, 0.6690]
+  ch_std_norm: [0.1146, 0.1135, 0.1139]
+
+  mixup:
+    enabled: False
+    alpha: 1.0
+    period: [20, {type: __sub__, x0: "@/globals/max_epoch", x1: 5}]
+  
+  train:
+    type: ImagePathLabelLazyDataset
+    paths: null
+    labels: null
+    transform:
+      type: Compose
+      transforms:
+        - {type: "PadIfNeeded", always_apply: True, border_mode: 3,
+            min_height: "@/dataset/img_size", min_width: "@/dataset/img_size"}
+        - {type: VerticalFlip, p: 0.5}
+        - {type: HorizontalFlip, p: 0.5}
+        - {type: ShiftScaleRotate, p: 0.5, shift_limit: 0.2, scale_limit: 0.2,
+            rotate_limit: 20, border_mode: 4, value: 0}
+        - {type: RandomResizedCrop, p: 1.0, scale: [0.875, 1.0],
+            height: "@/dataset/img_size", width: "@/dataset/img_size"}
+        - {type: RandomGridShuffle, p: 0.5, grid: [4, 4]}
+        - {type: Normalize, always_apply: True, max_pixel_value: 255.0,
+            mean: "@/dataset/ch_mean_norm", std: "@/dataset/ch_std_norm"}
+        - {type: ToTensorV2, always_apply: True}
+  val:
+    type: ImagePathLabelLazyDataset
+    paths: null
+    labels: null
+    transform:
+      type: Compose
+      transforms:
+        - {type: "PadIfNeeded", always_apply: True, border_mode: 3,
+            min_height: "@/dataset/img_size", min_width: "@/dataset/img_size"}
+        - {type: Normalize, always_apply: True, max_pixel_value: 255.0,
+            mean: "@/dataset/ch_mean_norm", std: "@/dataset/ch_std_norm"}
+        - {type: ToTensorV2, always_apply: True}
+  test:
+    type: ImagePathLabelLazyDataset
+    paths: null
+    labels: null
+    transform:
+      type: Compose
+      transforms:
+        - {type: "PadIfNeeded", always_apply: True, border_mode: 3,
+            min_height: "@/dataset/img_size", min_width: "@/dataset/img_size"}
+        - {type: Normalize, always_apply: True, max_pixel_value: 255.0,
+            mean: "@/dataset/ch_mean_norm", std: "@/dataset/ch_std_norm"}
+        - {type: ToTensorV2, always_apply: True}
+
+loader:
+  train: {type: DataLoader, dataset: "@/dataset/train",
+    batch_size: 32, num_workers: 4, shuffle: True, drop_last: True}
+  val: {type: DataLoader, dataset: "@/dataset/val",
+    batch_size: 64, num_workers: 4, shuffle: False, drop_last: False}
+  test: {type: DataLoader, dataset: "@/dataset/test",
+    batch_size: 64, num_workers: 4, shuffle: False, drop_last: False}
+
+optimizer:
+  type: AdamW
+  params: {type: method_call, obj: "@/model", method: parameters}
+  lr: 2.0e-05
+  weight_decay: 1.0e-04
+
+scheduler:
+  type: OneCycleLR
+  optimizer: "@/optimizer"
+  epochs: "@/globals/max_epoch"
+  steps_per_epoch: {type: __len__, obj: "@/loader/train"}
+  max_lr: 1.0e-3
+  pct_start: 0.1
+  anneal_strategy: cos
+  div_factor: 1.0e+2
+  final_div_factor: 0.5
+
+loss: {type: MSELoss}
+
+eval:
+  - type: micro_average
+    metric_func: {type: MSELoss}
+    report_name: loss
+  - type: calc_across_all_batchs
+    metric_func: {type: RMSEWithClip, min_value: 0, max_value: 3}
+    report_name: metric
+
+manager:
+  type: ExtensionsManager
+  models: "@/model"
+  optimizers: "@/optimizer"
+  max_epochs: "@/globals/max_epoch"
+  iters_per_epoch: {type: __len__, obj: "@/loader/train"}
+  out_dir: "@/globals/output_path"
+
+extensions:
+  # # log
+  - {type: observe_lr, optimizer: "@/optimizer"}
+  - {type: LogReport}
+  - {type: PlotReport, y_keys: lr, x_key: epoch, filename: lr.png}
+  - {type: PlotReport, y_keys: [train/loss, val/loss], x_key: epoch, filename: loss.png}
+  - {type: PlotReport, y_keys: val/metric, x_key: epoch, filename: metric.png}
+  - {type: PrintReport, entries: [
+      epoch, iteration, lr, train/loss, val/loss, val/metric, elapsed_time]}
+  - {type: ProgressBar, update_interval: 20}
+  # snapshot
+  - extension: {type: snapshot, target: "@/model", filename: "snapshot_by_metric_epoch_{.epoch}.pth"}
+    trigger: {type: MinValueTrigger, key: "val/metric", trigger: [1, epoch]}
+  # # lr scheduler
+  - {type: LRScheduler, scheduler: "@/scheduler", trigger: [1,  iteration]}

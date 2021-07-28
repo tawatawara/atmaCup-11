@@ -1,0 +1,15 @@
+globals:
+  seed: 1086
+  output_path: ../output/900_ensemble
+
+classification_dirs:
+  - ../output/100_resnet18d_cls
+  - ../output/101_resnet34d_cls
+  - ../output/102_resnet50d_cls
+  - ../output/103_resnest50d_1s4x24d_cls
+
+regression_dirs:
+  - ../output/200_resnet18d_reg
+  - ../output/201_resnet34d_reg
+  - ../output/202_resnet50d_reg
+  - ../output/203_resnest50d_1s4x24d_reg
