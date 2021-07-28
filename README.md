@@ -14,8 +14,8 @@
 * [その他補足](#その他補足)
     * [ソースコードの構成について](#ソースコードの構成について)
     * [結果の再現性について](#結果の再現性について)
-    * [出力等について](#出力などについて)
-
+    * [出力等について](#出力等について)
+    * [pytorch-pfn-extras 使いでない方へ](#pytorch-pfn-extras使いでない方へ)
 ## 解法概要
 
 詳細は discussion で公開しています [[link](https://www.guruguru.science/competitions/17/discussions/a768baf7-a805-46bb-ae29-88c92fd30fe6/)]
@@ -245,3 +245,7 @@ Classification/Regression モデルのみでの averaging, 全モデル(8 model)
 - このリポジトリは terminal での実行を前提としていますが、notebook に移植する場合は pfn-extras が出してくれるプログレスバーの表示がうまくいきません。もし移植するのであれば各 config yaml ファイルにある `ProgressBar` をコメントアウトし、`train.py` の 139行目にある `Evaluator` の引数 `progress_bar` を False にしてください。
 
 - 学習の出力結果を一切上げていないので何が出てくるか補足しておくと、学習ログの json ファイル、指定したタイミングでの model の snapshot、loss・metric・lr を可視化した png ファイルです。ここらへんの設定は config yaml ファイル の `extensions` で指定しています。
+
+### pytorch-pfn-extras使いでない方へ
+特に `Config System` を使用しているせいで面食らう部分もあるかと思いますが、`train[_simsiam].py` を読んでいただけると流れ自体は basic な training loop とほぼ同じだとわかると思います(mixup とか gradient accumulation を入れたことでちょっとごちゃついてますが)。
+manager と extensions の枠組みを使うことで素の training loop にあまり影響せずに前述の出力が出来るのが pytorch-pfn-extras の一番好きな所なので、興味がある方は是非使ってみてください！
